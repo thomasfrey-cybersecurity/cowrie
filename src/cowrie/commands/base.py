@@ -942,9 +942,25 @@ commands["history"] = Command_history
 
 
 class Command_date(HoneyPotCommand):
+    """``date [+FORMAT]``: the current time in UTC. Scripts build file names
+    from ``date +%s``, so a format operand is honoured."""
+
     def call(self) -> None:
-        time = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
-        self.write(f"{time.strftime('%a %b %d %H:%M:%S UTC %Y')}\n")
+        now = datetime.datetime.now(datetime.UTC)
+        fmt = next((arg[1:] for arg in self.args if arg.startswith("+")), None)
+        if fmt is None:
+            self.write(f"{now.strftime('%a %b %d %H:%M:%S UTC %Y')}\n")
+            return
+
+        def convert(match: re.Match[str]) -> str:
+            # %s and %N are GNU extensions strftime() does not have everywhere.
+            if match.group(1) == "s":
+                return str(int(now.timestamp()))
+            if match.group(1) == "N":
+                return f"{now.microsecond * 1000:09d}"
+            return match.group(0)
+
+        self.write(f"{now.strftime(re.sub('%(.)', convert, fmt))}\n")
 
 
 commands["/bin/date"] = Command_date

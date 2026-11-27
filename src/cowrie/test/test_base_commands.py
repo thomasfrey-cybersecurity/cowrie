@@ -117,6 +117,18 @@ class ShellBaseCommandsTests(unittest.TestCase):  # TODO: ps, history
             rb"[A-Za-z]{3} [A-Za-z]{3} \d{2} \d{2}:\d{2}:\d{2} UTC \d{4}\n" + PROMPT,
         )
 
+    def test_date_format_operand(self) -> None:
+        self.proto.lineReceived(b"date +%s\n")
+        self.assertRegex(self.tr.value(), rb"^\d{10}\n" + PROMPT + rb"$")
+        self.tr.clear()
+        self.proto.lineReceived(b"date -u +%Y-%m-%dT%H:%M:%SZ\n")
+        self.assertRegex(
+            self.tr.value(), rb"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\n" + PROMPT + rb"$"
+        )
+        self.tr.clear()
+        self.proto.lineReceived(b"date +%%s-%N\n")
+        self.assertRegex(self.tr.value(), rb"^%s-\d{9}\n" + PROMPT + rb"$")
+
     def test_bash_command(self) -> None:
         self.proto.lineReceived(b"bash\n")
         self.assertEqual(self.tr.value(), PROMPT)
