@@ -127,6 +127,45 @@ class ScriptExecutionTests(unittest.TestCase):
             + PROMPT,
         )
 
+    # ELF header stubs: 64-bit little-endian, type EXEC, then the machine.
+    ELF_X86_64 = b"\\177ELF\\002\\001\\001" + b"\\000" * 9 + b"\\002\\000\\076\\000"
+    ELF_MIPS_BE = b"\\177ELF\\001\\002\\001" + b"\\000" * 9 + b"\\000\\002\\000\\010"
+
+    def test_native_program_starts_silently(self) -> None:
+        """A program built for the emulated machine (x86_64) starts on a real
+        system; its output is unknown, so there is none, and no ENOEXEC."""
+        self.proto.lineReceived(b"printf '" + self.ELF_X86_64 + b"' > /tmp/bot")
+        self.proto.lineReceived(b"chmod +x /tmp/bot")
+        self.tr.clear()
+        self.proto.lineReceived(b"/tmp/bot arg; echo rc=$?")
+        self.assertEqual(self.tr.value(), b"rc=0\n" + PROMPT)
+
+    def test_program_for_another_machine_is_refused(self) -> None:
+        self.proto.lineReceived(b"printf '" + self.ELF_MIPS_BE + b"' > /tmp/bot")
+        self.proto.lineReceived(b"chmod +x /tmp/bot")
+        self.tr.clear()
+        self.proto.lineReceived(b"/tmp/bot; echo rc=$?")
+        self.assertEqual(
+            self.tr.value(),
+            b"-bash: /tmp/bot: cannot execute binary file: Exec format error\n"
+            b"rc=126\n" + PROMPT,
+        )
+
+    def test_native_program_still_needs_the_execute_bit(self) -> None:
+        self.proto.lineReceived(b"printf '" + self.ELF_X86_64 + b"' > /tmp/bot")
+        self.tr.clear()
+        self.proto.lineReceived(b"/tmp/bot; echo rc=$?")
+        self.assertEqual(
+            self.tr.value(), b"-bash: /tmp/bot: Permission denied\nrc=126\n" + PROMPT
+        )
+
+    def test_shell_does_not_run_a_native_program_as_a_script(self) -> None:
+        self.proto.lineReceived(b"printf '" + self.ELF_X86_64 + b"' > /tmp/bot")
+        self.tr.clear()
+        self.proto.lineReceived(b"bash /tmp/bot; echo rc=$?")
+        self.assertIn(b"cannot execute binary file", self.tr.value())
+        self.assertIn(b"rc=126\n", self.tr.value())
+
     def test_bash_binary_file_exit_status_is_126(self) -> None:
         self.proto.lineReceived(b'printf "\\x7fELF\\x01\\x00" > /tmp/payload3.x86')
         self.tr.clear()

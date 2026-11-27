@@ -23,7 +23,8 @@ import cowrie.commands
 from cowrie.core.config import CowrieConfig
 from cowrie.core.resources import read_data_bytes
 from cowrie.shell import command, honeypot, procfs
-from cowrie.shell.script import run_script_file
+from cowrie.shell.fs import FileNotFound
+from cowrie.shell.script import is_native_elf, run_script_file
 
 if TYPE_CHECKING:
     from twisted.python import failure
@@ -230,6 +231,19 @@ class HoneyPotBaseProtocol(insults.TerminalProtocol, TimeoutMixin):
                 if not self.fs.is_executable(path, self.user["uid"], self.user["gid"]):
                     self.errorWrite(f"{prefix}{name}: Permission denied\n")
                     self.exit_code = 126
+                    return
+                # A program built for this machine starts. What it would print
+                # is unknown, so it prints nothing and succeeds; the kernel's
+                # ENOEXEC is for programs built for another machine.
+                try:
+                    contents = self.fs.file_contents(path)
+                except (FileNotFound, FileNotFoundError):
+                    contents = b""
+                platform = CowrieConfig.get(
+                    "shell", "hardware_platform", fallback="x86_64"
+                )
+                if is_native_elf(contents, platform):
+                    self._log.info("Not running native program {path}", path=path)
                     return
                 run_script_file(
                     self,

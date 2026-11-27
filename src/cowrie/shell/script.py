@@ -8,13 +8,16 @@
 """
 Running uploaded code is a core honeypot job: a second-stage downloader is
 usually a shell script dropped by ``wget`` / ``curl`` / ``tftp`` and then run as
-``./x``, ``sh x`` or via a shebang. This module concentrates the two decisions
+``./x``, ``sh x`` or via a shebang. This module concentrates the decisions
 that path needs, so ``bash``/``sh`` and direct ``./file`` execution behave the
 same:
 
 * :func:`is_executable_binary` -- tell an ELF/PE/Mach-O or otherwise binary
   payload from a text script, so we refuse to "run" a binary instead of feeding
   its bytes to the parser (as both a real kernel and ``bash`` do).
+* :func:`is_native_elf` -- tell a program built for the emulated machine from
+  one for another machine: the first starts on a real system, only the second
+  is refused.
 * :func:`run_script_file` -- read the file from the emulated filesystem and run
   its contents through a fresh :class:`~cowrie.shell.honeypot.HoneyPotShell`.
   The whole text is handed to the parser unchanged: the grammar treats newlines
@@ -24,7 +27,7 @@ same:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from cowrie.shell.bashparse import max_input_size
 from cowrie.shell.fs import FileNotFound
@@ -78,6 +81,40 @@ def is_executable_binary(contents: bytes) -> bool:
         contents[:_SAMPLE_BYTES].decode("utf-8")
     except UnicodeDecodeError:
         return True
+    return False
+
+
+# ELF e_machine numbers a kernel for each hardware platform runs natively. A
+# 64-bit kernel also runs the 32-bit programs of its family.
+_EM_386, _EM_X86_64, _EM_ARM, _EM_AARCH64, _EM_MIPS = 3, 62, 40, 183, 8
+_NATIVE_MACHINES = (
+    (("x86_64", "amd64"), (_EM_X86_64, _EM_386)),
+    (("i386", "i486", "i586", "i686"), (_EM_386,)),
+    (("aarch64", "arm64"), (_EM_AARCH64, _EM_ARM)),
+    (("arm",), (_EM_ARM,)),
+    (("mips",), (_EM_MIPS,)),
+)
+_ET_EXEC, _ET_DYN = 2, 3
+
+
+def is_native_elf(contents: bytes, platform: str) -> bool:
+    """Return True if ``contents`` is an ELF program the emulated machine runs.
+
+    ``platform`` is the hardware name ``uname -m`` reports. A real kernel
+    starts a program built for it and only rejects one for another machine
+    with ENOEXEC, so the two must not get the same answer.
+    """
+    if len(contents) < 20 or not contents.startswith(b"\x7fELF"):
+        return False
+    if contents[5] not in (1, 2):
+        return False
+    order: Literal["little", "big"] = "little" if contents[5] == 1 else "big"
+    if int.from_bytes(contents[16:18], order) not in (_ET_EXEC, _ET_DYN):
+        return False
+    machine = int.from_bytes(contents[18:20], order)
+    for names, machines in _NATIVE_MACHINES:
+        if platform.startswith(names):
+            return machine in machines
     return False
 
 
