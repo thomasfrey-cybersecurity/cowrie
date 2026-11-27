@@ -16,6 +16,7 @@ command_modules = [
     "cat",
     "chmod",
     "chpasswd",
+    "command",
     "crontab",
     "curl",
     "cut",
